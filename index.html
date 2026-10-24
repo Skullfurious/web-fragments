@@ -1,12 +1,254 @@
-<input id="item" value="EARRING LUK">
-<input id="price" value="100K">
-<button onclick="copyMsg()">Copy</button>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maple Trade Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700&family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0e1a26; --panel:#1a2a38; --field:#0f1c28; --edge:#3a5368;
+  --maple:#f08a24; --maple-d:#c2650f; --meso:#ffd45e; --text:#e8eef3; --muted:#8fa6b8;
+  --pixel:"Pixelify Sans","Courier New",monospace; --body:"Nunito","Trebuchet MS",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:12px}
+body{
+  margin:0; min-height:100vh; color:var(--text); font:500 16px/1.5 var(--body);
+  background:
+    radial-gradient(1.5px 1.5px at 12% 18%,#fff8 50%,transparent 51%),
+    radial-gradient(1px 1px at 38% 8%,#fff7 50%,transparent 51%),
+    radial-gradient(2px 2px at 71% 22%,#ffd45eaa 50%,transparent 51%),
+    radial-gradient(1px 1px at 88% 12%,#fff7 50%,transparent 51%),
+    radial-gradient(1.5px 1.5px at 55% 35%,#fff6 50%,transparent 51%),
+    linear-gradient(#0a1420,#12283a 60%,#17363a);
+  background-attachment:fixed;
+  padding:0 16px 64px;
+}
+header{max-width:760px;margin:0 auto;padding:32px 0 20px}
+h1{font:700 34px/1.1 var(--pixel);margin:0;color:var(--meso);text-shadow:0 3px 0 #7a4a08}
+header p{margin:6px 0 0;color:var(--muted)}
+main{max-width:760px;margin:0 auto;display:grid;gap:18px}
+.win{background:var(--panel);border:2px solid var(--edge);border-radius:10px;overflow:hidden;box-shadow:0 6px 0 #0a141d}
+.bar{background:linear-gradient(var(--maple),var(--maple-d));color:#fff;font:700 17px/1 var(--pixel);padding:9px 14px;text-shadow:0 1px 0 #7a3d00}
+.body{padding:14px}
+input,select{
+  width:100%;background:var(--field);color:var(--text);border:2px solid var(--edge);border-radius:6px;
+  padding:8px 10px;font:inherit;min-width:0;
+}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--meso);outline-offset:1px}
+label{display:block;font-weight:700;font-size:14px;color:var(--muted);margin-bottom:4px}
+.row{display:grid;grid-template-columns:110px 1fr 100px 40px;gap:8px;margin-bottom:8px}
+.row .x{padding:0}
+button{
+  font:700 15px var(--body);color:#2a1600;background:var(--meso);border:2px solid #b8891d;border-bottom-width:4px;
+  border-radius:8px;padding:7px 14px;cursor:pointer;
+}
+button:active{transform:translateY(2px);border-bottom-width:2px}
+button.alt{background:var(--field);color:var(--text);border-color:var(--edge)}
+button.x{background:var(--field);color:#ff8f8f;border-color:var(--edge)}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.grid3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
+.hint{font-size:13px;color:var(--muted);margin:8px 0 0}
+.msg{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;margin-bottom:8px}
+.chat{
+  background:#000a;border:2px solid #000;border-radius:6px;padding:8px 10px;
+  color:var(--meso);font:500 15px/1.4 var(--pixel);word-break:break-word;min-height:42px;
+}
+.count{font-size:13px;color:var(--muted);margin-top:4px}
+.timer{display:flex;flex-wrap:wrap;align-items:end;gap:10px}
+.timer .f{width:110px}
+#clock{font:700 28px var(--pixel);color:var(--meso);min-width:90px}
+.due{background:#ffd45e;color:#2a1600}
+@media (prefers-reduced-motion:no-preference){
+  .pulse{animation:pulse .7s ease-in-out infinite alternate}
+  @keyframes pulse{to{transform:scale(1.08)}}
+}
+#toast{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--meso);color:#2a1600;
+  font-weight:700;padding:8px 18px;border-radius:20px;opacity:0;pointer-events:none;transition:opacity .2s;
+}
+#toast.on{opacity:1}
+@media (max-width:560px){
+  .row{grid-template-columns:1fr 1fr 40px}
+  .row .it{grid-column:1/-1;order:3}
+  .grid3{grid-template-columns:1fr}
+  .msg{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Maple Trade Chat</h1>
+  <p>Build your selling and buying lines, copy them, paste them in game.</p>
+</header>
+
+<main>
+  <section class="win">
+    <div class="bar">Lines</div>
+    <div class="body">
+      <div id="rows"></div>
+      <div class="actions">
+        <button id="add">+ Add line</button>
+        <button id="paste" class="alt">Import from clipboard</button>
+        <button id="clear" class="alt">Clear all</button>
+      </div>
+      <p class="hint">Import reads text like &lt;&lt;Selling&gt;&gt; ITEM &lt;&lt;&lt;100K&gt;&gt;&gt; and turns it back into editable lines. Your browser will ask for clipboard permission.</p>
+    </div>
+  </section>
+
+  <section class="win">
+    <div class="bar">Format</div>
+    <div class="body">
+      <div class="grid3">
+        <div><label for="tpl">Line template</label><input id="tpl"></div>
+        <div><label for="mode">Output</label>
+          <select id="mode"><option value="combined">One message</option><option value="separate">One per line</option></select></div>
+        <div><label for="sep">Join with</label><input id="sep"></div>
+      </div>
+      <p class="hint">Template placeholders: {type} {item} {price}. Join applies to “One message”.</p>
+    </div>
+  </section>
+
+  <section class="win">
+    <div class="bar">Message</div>
+    <div class="body"><div id="out"></div></div>
+  </section>
+
+  <section class="win">
+    <div class="bar">Bump timer</div>
+    <div class="body timer">
+      <div class="f"><label for="mins">Minutes</label><input id="mins" type="number" min="0.1" step="0.5" value="5"></div>
+      <button id="start">Start</button>
+      <button id="stop" class="alt">Stop</button>
+      <div id="clock">--:--</div>
+      <p class="hint" style="flex-basis:100%;margin:0">Beeps and flashes the tab title when it’s time to post again, then restarts. Allow the tab to play sound.</p>
+    </div>
+  </section>
+</main>
+<div id="toast" role="status"></div>
+<datalist id="types"><option>Selling</option><option>Buying</option><option>Trading</option></datalist>
 
 <script>
-function copyMsg() {
-  // Template literal: ${...} inserts the current field values into the string
-  const text = `<<Selling>> ${item.value} <<<${price.value}>>>`;
-  // writeText returns a Promise; it needs a user click to be allowed
-  navigator.clipboard.writeText(text);
+const $ = id => document.getElementById(id);
+const KEY = "mapleTradeChat.v1";
+let S = {
+  rows: [{type:"Selling",item:"EARRING LUK",price:"100K"},{type:"Selling",item:"EARING INT",price:"80K"}],
+  tpl: "<<{type}>> {item} <<<{price}>>>", mode: "combined", sep: " "
+};
+try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.rows) S = saved; } catch (e) {}
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("on"); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove("on"),1400); }
+
+async function copy(text){
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { const a=document.createElement("textarea"); a.value=text; document.body.appendChild(a); a.select(); document.execCommand("copy"); a.remove(); }
+  toast("Copied");
 }
+
+function buildRows(){
+  const box = $("rows"); box.textContent = "";
+  S.rows.forEach((r, i) => {
+    const d = document.createElement("div"); d.className = "row";
+    const mk = (cls, key, ph, list) => {
+      const inp = document.createElement("input");
+      inp.value = r[key]; inp.placeholder = ph; inp.setAttribute("aria-label", ph);
+      if (cls) inp.className = cls;
+      if (list) inp.setAttribute("list", list);
+      inp.addEventListener("input", () => { r[key] = inp.value; update(); });
+      return inp;
+    };
+    const x = document.createElement("button");
+    x.className = "x"; x.textContent = "✕"; x.setAttribute("aria-label", "Remove line");
+    x.addEventListener("click", () => { S.rows.splice(i, 1); buildRows(); update(); });
+    d.append(mk("", "type", "Type", "types"), mk("it", "item", "Item"), mk("", "price", "Price"), x);
+    box.appendChild(d);
+  });
+}
+
+function lines(){
+  return S.rows.filter(r => r.item.trim())
+    .map(r => S.tpl.replace(/\{(\w+)\}/g, (m, k) => (k in r ? r[k] : m)));
+}
+
+function renderOut(){
+  const out = $("out"); out.textContent = "";
+  const L = lines();
+  const msgs = !L.length ? [] : S.mode === "combined" ? [L.join(S.sep)] : L;
+  if (!msgs.length) { out.textContent = "Add an item to see your message."; return; }
+  msgs.forEach(m => {
+    const w = document.createElement("div"); w.className = "msg";
+    const c = document.createElement("div");
+    const t = document.createElement("div"); t.className = "chat"; t.textContent = m;
+    const n = document.createElement("div"); n.className = "count"; n.textContent = m.length + " characters";
+    c.append(t, n);
+    const b = document.createElement("button"); b.textContent = "Copy"; b.addEventListener("click", () => copy(m));
+    w.append(c, b); out.appendChild(w);
+  });
+}
+
+function update(){ save(); renderOut(); }
+
+$("add").addEventListener("click", () => {
+  const last = S.rows[S.rows.length - 1];
+  S.rows.push({type: last ? last.type : "Selling", item: "", price: ""});
+  buildRows(); update();
+  const ins = document.querySelectorAll("#rows .it"); ins[ins.length - 1].focus();
+});
+$("clear").addEventListener("click", () => { S.rows = [{type:"Selling",item:"",price:""}]; buildRows(); update(); });
+
+$("paste").addEventListener("click", async () => {
+  let txt;
+  try { txt = await navigator.clipboard.readText(); }
+  catch (e) { toast("Clipboard blocked. Allow access for this site."); return; }
+  const re = /<<\s*([^<>]+?)\s*>>\s*([^<>]+?)\s*<<<\s*([^<>]+?)\s*>>>/g;
+  const found = [...txt.matchAll(re)].map(m => ({type:m[1], item:m[2], price:m[3]}));
+  if (!found.length) { toast("No trade lines found in clipboard"); return; }
+  S.rows = found; buildRows(); update(); toast("Imported " + found.length + " lines");
+});
+
+[["tpl","tpl"],["mode","mode"],["sep","sep"]].forEach(([id, key]) => {
+  $(id).value = S[key];
+  $(id).addEventListener("input", () => { S[key] = $(id).value; update(); });
+});
+
+/* Bump timer */
+let tick = null, endAt = 0, ctx = null, flash = null;
+const baseTitle = document.title;
+const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
+function beep(){
+  if (!ctx) return;
+  const o = ctx.createOscillator(); o.frequency.value = 880; o.connect(ctx.destination);
+  o.start(); o.stop(ctx.currentTime + 0.25);
+}
+function stopTimer(){
+  clearInterval(tick); clearInterval(flash); tick = flash = null;
+  document.title = baseTitle; $("clock").textContent = "--:--"; $("clock").classList.remove("pulse");
+}
+$("start").addEventListener("click", () => {
+  stopTimer();
+  const mins = parseFloat($("mins").value) || 5, len = mins * 60000;
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  endAt = Date.now() + len;
+  tick = setInterval(() => {
+    const left = endAt - Date.now();
+    $("clock").textContent = fmt(left);
+    if (left <= 0) {
+      beep(); toast("Time to post again");
+      endAt = Date.now() + len;
+      $("clock").classList.add("pulse");
+      let on = false; clearInterval(flash);
+      flash = setInterval(() => { document.title = (on = !on) ? "Post now! " : baseTitle; }, 700);
+      setTimeout(() => { clearInterval(flash); document.title = baseTitle; $("clock").classList.remove("pulse"); }, 6000);
+    }
+  }, 250);
+});
+$("stop").addEventListener("click", stopTimer);
+
+buildRows(); renderOut();
 </script>
+</body>
+</html>
