@@ -1,0 +1,12 @@
+<input id="item" value="EARRING LUK">
+<input id="price" value="100K">
+<button onclick="copyMsg()">Copy</button>
+
+<script>
+function copyMsg() {
+  // Template literal: ${...} inserts the current field values into the string
+  const text = `<<Selling>> ${item.value} <<<${price.value}>>>`;
+  // writeText returns a Promise; it needs a user click to be allowed
+  navigator.clipboard.writeText(text);
+}
+</script>
