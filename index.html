@@ -50,6 +50,17 @@ PADDING (pad())
   and only enough that it cannot (+1 safety unit, capped at the row end). If the next word already wraps naturally,
   nothing is added. Full-row padding was removed because it wasted characters against the 70 limit.
 
+PRESET BEHAVIOR (v3.4)
+  Choosing a name in the dropdown loads it immediately (no Load button). isSaved() compares the live settings with
+  every saved preset and with the factory defaults (DEFAULT_S, captured before saved settings are merged); if none
+  match, a confirm() warns before the load discards them. curPreset tracks the loaded/last-saved name and is
+  re-detected after a page reload. Cancel puts the dropdown back on curPreset.
+  Default tag style 1 is "<ㅡ{type}ㅡ>" (old saved default "<<<{type}>>>" is migrated); style 2 is "<<{type}>>".
+  Fill (updated v3.5): a visible fill always pads the row to full width, split around the text; Blank pads only when needed.
+  Old note: with a visible fill (ㅡ _ @) pad() splits the fill around the row text, attached with no spaces
+  (ㅡㅡTextㅡㅡ); the row width is unchanged so the row-break logic still holds. Blank fill is not split, because
+  spaces between two words form a single gap whose split point makes no visible difference.
+
 PRESETS
   Stored in localStorage under PKEY (mapleTradeChat.presets.v1) as {name: snapshot}, separate from the live
   settings (KEY) so bumping KEY does not erase presets. A snapshot holds the fields in PFIELDS: type, custom, rows,
@@ -106,6 +117,9 @@ COLLABORATION NOTES FROM THE OWNER'S PREFERENCES
   The owner is token-limited, so keep changes small and say clearly what is unverified.
 
 CHANGELOG (newest first)
+  v3.5: in-page confirm (browser confirm() was being blocked, so Cancel happened silently); price default <ㅡ{price}ㅡ>;
+        tag style 2 default '<ㅡ{type}ㅡ>'; visible fill now pads rows to full width split around the text, Blank stays minimal.
+  v3.4: presets auto-load with unsaved-changes warning; default tag <ㅡ{type}ㅡ>; fill spreads around text.
   v3.3: minimal padding, game-model preview bubble, fixed preview dock, spaces no longer collapsed in the preview.
   v3.2: starry night theme restored as the default, with a toggle to the light theme.
   v3.1: presets (save/load/delete); placeholder default items.
@@ -222,6 +236,9 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
 .checks .chk{margin:0}
 .prow{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end}
 .prow button{padding:7px 14px}
+.pask{margin-top:10px;padding:10px 12px;border:3px solid var(--gold);border-radius:12px}
+.pask[hidden]{display:none}
+.pask p{margin:0 0 6px}
 /* Starry night theme (the first edition's look). Overrides the light variables above. */
 :root[data-theme="night"]{
   --cream:#1a2a38; --field:#0f1c28; --brown:#e8eef3; --edge:#3a5368; --shadow:#0a141d;
@@ -288,10 +305,13 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
       </div>
       <div class="prow" style="margin-top:10px">
         <div><label for="plist">Saved presets</label><select id="plist"></select></div>
-        <button id="pload" class="alt">Load</button>
         <button id="pdel" class="alt">Delete</button>
       </div>
-      <p class="hint">A preset stores the message type, items and prices, name, layout, fill, tag styles and other format settings. It does not store timer sounds or volume. Saving with an existing name replaces it. Presets live in this browser only, so they will not appear on another device or browser, and clearing site data removes them.</p>
+      <div id="pask" class="pask" hidden role="alertdialog" aria-live="assertive">
+        <p id="paskmsg"></p>
+        <div class="actions"><button id="paskok" type="button"></button><button id="paskno" class="alt" type="button">Cancel</button></div>
+      </div>
+      <p class="hint">Choosing a preset from the list loads it right away. If your current settings are not saved in any preset, you are asked before they are replaced. A preset stores the message type, items and prices, name, layout, fill, tag styles and other format settings, but not the timer sound or volume. Saving with an existing name replaces it. Presets live in this browser only, so they will not appear on another device or browser, and clearing site data removes them.</p>
     </div>
   </section>
 
@@ -325,7 +345,7 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
         <div><label for="rw">@ per full row</label><input id="rw" type="number" min="3" max="12" step="0.1"></div>
         <div><label for="lim">Character limit</label><input id="lim" type="number" min="10" max="500" step="1"></div>
       </div>
-      <p class="hint">One item per row measures each piece of text and adds just enough fill after each item that the next item cannot fit on the same row, and adds nothing when the next item would wrap by itself, which saves characters. The game shows your name at the start of the first row, so it counts against that row. Widths are estimates: if rows do not line up in game, change “@ per full row” (decimals work). Fill characters count toward the character limit, and an over-limit message is flagged in red. Blank uses the most characters and ㅡ the fewest.</p>
+      <p class="hint">One item per row measures each piece of text. With ㅡ, _ or @ it fills each item's row to full width with the fill split around the text (ㅡㅡItemㅡㅡ). With Blank it adds just enough spaces after each item that the next item cannot fit on the same row, and adds nothing when the next item would wrap by itself, which saves characters. The game shows your name at the start of the first row, so it counts against that row. Widths are estimates: if rows do not line up in game, change “@ per full row” (decimals work). Fill characters count toward the character limit, and an over-limit message is flagged in red. Blank uses the most characters and ㅡ the fewest.</p>
       <div class="grid3" style="margin-top:12px">
         <div><label for="tpl">Line template</label><input id="tpl"></div>
         <div><label for="mode">Output</label>
@@ -381,11 +401,15 @@ const TYPES = ["Selling", "Buying", "Trading", "Custom"];
 let S = {
   type: "Selling", custom: "",
   rows: [{item:"Item 1",price:"10K"},{item:"Item 2",price:"20K"}],
-  tpl: "{item} <<<{price}>>>", mode: "combined", sep: " ",
-  tagA: "<<<{type}>>>", tagB: "<<{type}>>", alt: true, vol: 0.4, snd: "coin", ticker: false, fit: true, rw: 7, name: "Mapler", limit: 70, fill: " "
+  tpl: "{item} <ㅡ{price}ㅡ>", mode: "combined", sep: " ",
+  tagA: "<ㅡ{type}ㅡ>", tagB: "'<ㅡ{type}ㅡ>'", alt: true, vol: 0.4, snd: "coin", ticker: false, fit: true, rw: 7, name: "Mapler", limit: 70, fill: " "
 };
+const DEFAULT_S = JSON.parse(JSON.stringify(S));   // factory defaults, used to tell whether the live settings are "unsaved"
 try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && v.rows) S = Object.assign(S, v); } catch (e) {}
 if (S.tagB === "'<<<{type}>>>'") S.tagB = "<<{type}>>";
+if (S.tagA === "<<<{type}>>>") S.tagA = "<ㅡ{type}ㅡ>";
+if (S.tagB === "<<{type}>>") S.tagB = "'<ㅡ{type}ㅡ>'";            // old default tag style 2 -> new default
+if (S.tpl === "{item} <<<{price}>>>") S.tpl = "{item} <ㅡ{price}ㅡ>";  // old default line template -> new default   // old default tag style -> new default
 // Replace the old built-in example items with placeholders (only if the user never edited them)
 if (S.rows.length === 2 && /^EARRING LUK/.test(S.rows[0].item) && /^EARING INT/.test(S.rows[1].item))
   S.rows = [{item:"Item 1",price:"10K"},{item:"Item 2",price:"20K"}];
@@ -455,11 +479,14 @@ function fitRows(text, W){
 // which saves characters. One extra unit of fill absorbs small errors in the width estimate.
 function pad(txt, w, W, nextW){
   const c = cwOf(S.fill), sp = CW[" "];
-  const need = W - w - sp - nextW;                 // room left if the next word followed after one joining space
-  if (need < 0) return txt;                        // it already wraps naturally
-  const n = Math.min(Math.floor((W - w) / c),      // never pad past the end of the row itself
-                     Math.floor(need / c) + 2);    // minimum needed (+1) plus one safety unit
-  return txt + S.fill.repeat(Math.max(0, n));
+  if (S.fill !== " ") {   // visible fill (ㅡ _ @): fill the row to its full width, split around the text  ㅡㅡXㅡㅡ
+    const f = Math.max(0, Math.floor((W - w) / c - 0.3)), left = Math.floor(f / 2);   // 0.3 unit margin so the row never overflows
+    return S.fill.repeat(left) + txt + S.fill.repeat(f - left);
+  }
+  // blank: only as many spaces as needed to stop the next word fitting on this row; none if it wraps anyway
+  const need = W - w - sp - nextW;
+  if (need < 0) return txt;
+  return txt + " ".repeat(Math.min(Math.floor((W - w) / sp), Math.floor(need / sp) + 2));
 }
 // Rough model of the game bubble: words wrap by width, runs of spaces keep their width mid-row but are dropped at a wrap
 function gameRows(text){
@@ -568,11 +595,11 @@ $("paste").addEventListener("click", async () => {
   try { txt = await navigator.clipboard.readText(); }
   catch (e) { toast("Clipboard blocked. Allow access for this site."); return; }
   let t = txt.replace(/\s+/g, " ").trim(), type = null;
-  const head = t.match(/^'?<{2,3}\s*([^<>]+?)\s*>{2,3}'?\s*/);   // leading tag, with or without quotes
-  if (head) { type = head[1]; t = t.slice(head[0].length); }
-  t = t.replace(/'?<{2,3}\s*(selling|buying|trading)\s*>{2,3}'?/gi, " "); // repeated tags from older messages
-  const found = [...t.matchAll(/([^<>]+?)\s*<<<\s*([^<>]+?)\s*>>>/g)]
-    .map(m => ({item: m[1].replace(/^[\s,;|]+/, "").trim(), price: m[2]}))
+  const head = t.match(/^'?(?:<{2,3}\s*([^<>]+?)\s*>{2,3}|<ㅡ\s*([^<>]+?)\s*ㅡ>)'?\s*/);   // leading tag, with or without quotes
+  if (head) { type = head[1] || head[2]; t = t.slice(head[0].length); }
+  t = t.replace(/'?(?:<{2,3}\s*(selling|buying|trading)\s*>{2,3}|<ㅡ\s*(selling|buying|trading)\s*ㅡ>)'?/gi, " "); // repeated tags from older messages
+  const found = [...t.matchAll(/([^<>]+?)\s*(?:<<<\s*([^<>]+?)\s*>>>|<ㅡ\s*([^<>]+?)\s*ㅡ>)/g)]
+    .map(m => ({item: m[1].replace(/^[\s,;|'ㅡ_@]+|[\sㅡ_@']+$/g, "").trim(), price: m[2] || m[3]}))
     .filter(r => r.item);
   if (!found.length) { toast("No trade lines found in clipboard"); return; }
   if (type) {
@@ -592,7 +619,7 @@ $("alt").addEventListener("change", () => { S.alt = $("alt").checked; flip = fal
 $("rw").value = S.rw; $("rw").addEventListener("input", () => { S.rw = $("rw").value; update(); });
 $("fit").checked = S.fit; $("fit").addEventListener("change", () => { S.fit = $("fit").checked; update(); });
 // Checked = short tags (S> / S>>), unchecked = long tags (<<<Selling>>> / '<<<Selling>>>')
-const SHORT = ["{t}>", "{t}>>"], LONG = ["<<<{type}>>>", "<<{type}>>"];
+const SHORT = ["{t}>", "{t}>>"], LONG = ["<ㅡ{type}ㅡ>", "'<ㅡ{type}ㅡ>'"];
 const syncShort = () => { $("short").checked = S.tagA === SHORT[0] && S.tagB === SHORT[1]; };
 $("short").addEventListener("change", () => {
   [S.tagA, S.tagB] = $("short").checked ? SHORT : LONG;
@@ -601,7 +628,7 @@ $("short").addEventListener("change", () => {
 ["tagA", "tagB"].forEach(id => $(id).addEventListener("input", syncShort));  // editing a tag box by hand updates the checkbox
 syncShort();
 $("lay").addEventListener("change", () => {
-  const p = {two: "{item}{br}{price}", frame: "{item}{br}|----{price}----|", split: "{item}{gap}{price}", one: "{item} {price}"}[$("lay").value];
+  const p = {two: "{item}{br}<ㅡ{price}ㅡ>", frame: "{item}{br}|----{price}----|", split: "{item}{gap}{price}", one: "{item} <ㅡ{price}ㅡ>"}[$("lay").value];
   if (!p) return;
   S.tpl = p; $("tpl").value = p; $("lay").value = ""; update();
 });
@@ -679,13 +706,21 @@ const PKEY = "mapleTradeChat.presets.v1";
 const PFIELDS = ["type","custom","rows","tpl","mode","sep","tagA","tagB","alt","fit","rw","name","limit","fill"];
 let P = {};
 try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) {}
+let curPreset = "";   // name of the preset that is loaded or was last saved ("" = none)
 const savePresets = () => { try { localStorage.setItem(PKEY, JSON.stringify(P)); return true; } catch (e) { toast("Could not save: browser storage is blocked"); return false; } };
+// Snapshot of the preset fields. norm() turns numbers into strings so "7" and 7 compare equal.
+const snap = src => { const o = {}; PFIELDS.forEach(k => o[k] = JSON.parse(JSON.stringify(src[k]))); return o; };
+const norm = o => JSON.stringify(o, (k, x) => typeof x === "number" ? String(x) : x);
+const presetKey = p => norm(snap(Object.assign({}, DEFAULT_S, p)));   // older presets may lack newer fields
+// Unsaved = the live settings match no saved preset and are not the factory defaults
+const isSaved = () => { const cur = norm(snap(S)); return cur === norm(snap(DEFAULT_S)) || Object.values(P).some(p => presetKey(p) === cur); };
 function renderPresets(sel){
   const box = $("plist"); box.textContent = "";
   const names = Object.keys(P).sort((a, b) => a.localeCompare(b));
   if (!names.length) { const o = document.createElement("option"); o.textContent = "No presets saved yet"; o.value = ""; box.appendChild(o); return; }
+  const first = document.createElement("option"); first.value = ""; first.textContent = "Choose a preset…"; box.appendChild(first);
   names.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; box.appendChild(o); });
-  if (sel && P[sel]) box.value = sel;
+  box.value = sel && P[sel] ? sel : "";
 }
 function applyPreset(p){
   PFIELDS.forEach(k => { if (k in p) S[k] = JSON.parse(JSON.stringify(p[k])); });   // deep copy so edits never change the stored preset
@@ -697,24 +732,42 @@ function applyPreset(p){
 $("psave").addEventListener("click", () => {
   const name = $("pname").value.trim();
   if (!name) { toast("Type a preset name first"); $("pname").focus(); return; }
-  const existed = name in P, snap = {};
-  PFIELDS.forEach(k => snap[k] = JSON.parse(JSON.stringify(S[k])));
-  P[name] = snap;
-  if (!savePresets()) { if (!existed) delete P[name]; return; }
-  renderPresets(name); toast(existed ? "Preset updated" : "Preset saved");
+  const existed = name in P, before = P[name];
+  P[name] = snap(S);
+  if (!savePresets()) { if (existed) P[name] = before; else delete P[name]; return; }
+  curPreset = name; renderPresets(name); toast(existed ? "Preset updated" : "Preset saved");
 });
-$("pload").addEventListener("click", () => {
+// Choosing a preset loads it straight away. If the current settings are unsaved, ask before replacing them.
+// Ask inside the page instead of confirm(), which some browsers and embedded previews block silently
+function ask(msg, okLabel){
+  return new Promise(res => {
+    const box = $("pask"), ok = $("paskok"), no = $("paskno");
+    $("paskmsg").textContent = msg; ok.textContent = okLabel; box.hidden = false; ok.focus();
+    const done = v => { box.hidden = true; ok.onclick = no.onclick = null; res(v); };
+    ok.onclick = () => done(true); no.onclick = () => done(false);
+  });
+}
+// Choosing a preset loads it straight away. If the current settings are unsaved, ask before replacing them.
+$("plist").addEventListener("change", async () => {
   const n = $("plist").value;
-  if (!n || !P[n]) { toast("Nothing to load"); return; }
-  applyPreset(P[n]); $("pname").value = n; toast("Loaded “" + n + "”");
+  if (!n || !P[n]) { $("plist").value = curPreset; return; }
+  if (!isSaved()) {
+    const go = await ask("You have unsaved changes" + (curPreset ? " to “" + curPreset + "”" : "") + ". Load “" + n + "” anyway and discard them?", "Discard and load");
+    if (!go) { $("plist").value = curPreset; return; }
+  }
+  applyPreset(P[n]); curPreset = n; $("pname").value = n; $("plist").value = n; toast("Loaded “" + n + "”");
 });
-$("pdel").addEventListener("click", () => {
+$("pdel").addEventListener("click", async () => {
   const n = $("plist").value;
-  if (!n || !P[n]) { toast("Nothing to delete"); return; }
-  if (!confirm("Delete preset “" + n + "”?")) return;
-  delete P[n]; savePresets(); renderPresets(); toast("Preset deleted");
+  if (!n || !P[n]) { toast("Choose a preset to delete"); return; }
+  if (!(await ask("Delete preset “" + n + "”?", "Delete"))) return;
+  delete P[n]; savePresets(); if (curPreset === n) curPreset = ""; renderPresets(curPreset); toast("Preset deleted");
 });
 renderPresets();
+{ // after a page reload, re-select the preset that matches the restored settings
+  const m = Object.keys(P).find(n => presetKey(P[n]) === norm(snap(S)));
+  if (m) { curPreset = m; renderPresets(m); $("pname").value = m; }
+}
 
 
 /* Preview dock: collapsible, remembered per browser */
