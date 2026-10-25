@@ -37,6 +37,19 @@ STATE (object S, saved to localStorage on every change)
   type, custom, rows[{item,price}], tpl (line template), mode ("combined"|"separate"), sep, tagA, tagB, alt,
   fit, rw, name, limit, fill, vol, snd, ticker.   "flip" (which tag style is next) is memory only.
 
+PREVIEW DOCK
+  Fixed panel bottom-right (#dock, collapsible, state in localStorage mapleTradeChat.dockmin). It shows, for each
+  message, a game-style bubble built by gameRows(), the char counter, and a Copy button (same handler as the Message
+  window). gameRows() models the game: words wrap by estimated width, the "Name :" prefix is part of row 1, runs of
+  spaces keep their width mid-row and are dropped at a wrap. The bubble is white-space:pre with explicit line breaks,
+  so the preview shows the layout the page predicts. Earlier previews collapsed spaces (normal HTML whitespace) and
+  looked wrong; .chat is now pre-wrap and the ticker strip is pre.
+
+PADDING (pad())
+  Minimal, not full-row: after each item, add fill only if the next item's first word would otherwise fit on the row,
+  and only enough that it cannot (+1 safety unit, capped at the row end). If the next word already wraps naturally,
+  nothing is added. Full-row padding was removed because it wasted characters against the 70 limit.
+
 PRESETS
   Stored in localStorage under PKEY (mapleTradeChat.presets.v1) as {name: snapshot}, separate from the live
   settings (KEY) so bumping KEY does not erase presets. A snapshot holds the fields in PFIELDS: type, custom, rows,
@@ -93,6 +106,7 @@ COLLABORATION NOTES FROM THE OWNER'S PREFERENCES
   The owner is token-limited, so keep changes small and say clearly what is unverified.
 
 CHANGELOG (newest first)
+  v3.3: minimal padding, game-model preview bubble, fixed preview dock, spaces no longer collapsed in the preview.
   v3.2: starry night theme restored as the default, with a toggle to the light theme.
   v3.1: presets (save/load/delete); placeholder default items.
   v3 : name default "Mapler"; fill default Blank (spaces); invisible filler removed; {gap} uses spaces; Format
@@ -239,6 +253,21 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
 :root[data-theme="night"] #clock{color:var(--gold)}
 :root[data-theme="night"] button:not(.alt):not(.x){color:#2a1600;background:var(--gold);border-color:#b8891d;text-shadow:none}
 .themebtn{margin-top:12px;padding:5px 14px;font-size:15px}
+/* Preview dock and whitespace handling. Placed last so it wins over earlier rules. */
+.chat{white-space:pre-wrap}                      /* show runs of spaces instead of collapsing them */
+.mega .strip{white-space:pre}
+.bubble{display:inline-block;white-space:pre;width:auto;min-width:96px;overflow-wrap:normal;margin:0}
+#dock{position:fixed;right:12px;bottom:12px;width:236px;max-height:62vh;overflow:auto;z-index:20;background:var(--cream);color:var(--brown);
+  border:3px solid var(--edge);border-radius:14px;box-shadow:0 5px 0 var(--shadow);padding:8px 10px}
+.dockhead{display:flex;justify-content:space-between;align-items:center;font:400 18px var(--display);margin-bottom:6px}
+.dockhead button{padding:2px 12px;font-size:14px;border-bottom-width:4px}
+#dock.min #dockbody{display:none}
+#dock.min .dockhead{margin-bottom:0}
+.dockmsg{text-align:center;margin-bottom:10px}
+.dockmsg .count{margin:4px 0 6px}
+.dockmsg button{padding:3px 18px;font-size:15px}
+@media (max-width:1040px){ main{margin-bottom:300px} }
+@media (max-width:560px){ #dock{width:200px;right:8px;bottom:8px;max-height:46vh} }
 </style>
 </head>
 <body>
@@ -296,7 +325,7 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
         <div><label for="rw">@ per full row</label><input id="rw" type="number" min="3" max="12" step="0.1"></div>
         <div><label for="lim">Character limit</label><input id="lim" type="number" min="10" max="500" step="1"></div>
       </div>
-      <p class="hint">One item per row measures each piece of text and pads the rest of the row with the fill character, so the next item starts on a fresh row. The game shows your name at the start of the first row, so it counts against that row. Widths are estimates: if rows do not line up in game, change “@ per full row” (decimals work). Fill characters count toward the character limit, and an over-limit message is flagged in red. Blank needs the most characters and ㅡ the fewest.</p>
+      <p class="hint">One item per row measures each piece of text and adds just enough fill after each item that the next item cannot fit on the same row, and adds nothing when the next item would wrap by itself, which saves characters. The game shows your name at the start of the first row, so it counts against that row. Widths are estimates: if rows do not line up in game, change “@ per full row” (decimals work). Fill characters count toward the character limit, and an over-limit message is flagged in red. Blank uses the most characters and ㅡ the fewest.</p>
       <div class="grid3" style="margin-top:12px">
         <div><label for="tpl">Line template</label><input id="tpl"></div>
         <div><label for="mode">Output</label>
@@ -338,6 +367,10 @@ input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:va
     </div>
   </section>
 </main>
+<aside id="dock" aria-label="Message preview">
+  <div class="dockhead"><span>Preview</span><button id="dockmin" class="alt" type="button" aria-expanded="true">Hide</button></div>
+  <div id="dockbody"></div>
+</aside>
 <div id="toast" role="status"></div>
 
 <script>
@@ -418,8 +451,33 @@ function fitRows(text, W){
   if (cur) rows.push([cur, w]);
   return rows;
 }
-// Fill the remaining width of a row with @ (rounded down so it never overflows)
-const pad = (txt, w, W) => txt + S.fill.repeat(Math.max(0, Math.floor((W - w) / cwOf(S.fill))));
+// Add just enough fill that the NEXT word cannot fit on this row. Adds nothing when that word would wrap on its own,
+// which saves characters. One extra unit of fill absorbs small errors in the width estimate.
+function pad(txt, w, W, nextW){
+  const c = cwOf(S.fill), sp = CW[" "];
+  const need = W - w - sp - nextW;                 // room left if the next word followed after one joining space
+  if (need < 0) return txt;                        // it already wraps naturally
+  const n = Math.min(Math.floor((W - w) / c),      // never pad past the end of the row itself
+                     Math.floor(need / c) + 2);    // minimum needed (+1) plus one safety unit
+  return txt + S.fill.repeat(Math.max(0, n));
+}
+// Rough model of the game bubble: words wrap by width, runs of spaces keep their width mid-row but are dropped at a wrap
+function gameRows(text){
+  const W = rowW(), sp = CW[" "], name = (S.name || "").trim();
+  const src = (name ? name + " : " : "") + text, rows = [];
+  let cur = "", w = 0, gap = "", gw = 0;
+  for (const m of src.matchAll(/ +|[^ ]+/g)) {
+    const t = m[0];
+    if (t[0] === " ") { if (cur) { gap += t; gw += t.length * sp; } continue; }
+    const ww = tw(t);
+    if (!cur) { cur = t; w = ww; }
+    else if (w + gw + ww <= W) { cur += gap + t; w += gw + ww; }
+    else { rows.push(cur); cur = t; w = ww; }
+    gap = ""; gw = 0;
+  }
+  if (cur) rows.push(cur);
+  return rows;
+}
 const lim = () => parseInt(S.limit) || 70;
 const typeText = () => S.type === "Custom" ? (S.custom.trim() || "Custom") : S.type;
 const tag = () => (S.alt && flip ? S.tagB : S.tagA).replace(/\{type\}/g, typeText()).replace(/\{t\}/g, typeText().charAt(0).toUpperCase());
@@ -437,6 +495,7 @@ function messages(){
   const segs = [];                       // each segment ends its own row
   if (t) segs.push(t);
   L.forEach(l => l.split("{br}").forEach(p => { if (p.trim()) segs.push(p.trim()); }));
+  const firstW = i => segs[i + 1] === undefined ? 0 : tw(segs[i + 1].replace(/\{gap\}/g, " ").trim().split(" ")[0] || "");
   const out = segs.map((sg, i) => {
     const k = sg.indexOf("{gap}");
     if (k >= 0) {   // text before {gap} stays left, text after it goes to the right edge, invisible fill in between
@@ -448,7 +507,7 @@ function messages(){
     // the first row of a message starts with "Name :", so measure it as part of that row
     const rows = fitRows(i === 0 && pre ? pre + " " + sg : sg, W);
     if (i === 0 && pre) { rows[0][0] = rows[0][0].slice(pre.length).trim(); if (!rows[0][0]) rows.shift(); }
-    return rows.map(([txt, w], k) => (k === rows.length - 1 && i < segs.length - 1) ? pad(txt, w, W) : txt).join(" ");
+    return rows.map(([txt, w], k) => (k === rows.length - 1 && i < segs.length - 1) ? pad(txt, w, W, firstW(i)) : txt).join(" ");
   });
   return [out.join(" ")];
 }
@@ -464,25 +523,34 @@ function checkTags(){
   $("tagchk").textContent = bad.length ? "Too wide for one row: " + bad.join(", ") + ". Shorten it." : "";
   $("tagchk").hidden = !bad.length;   // only shown when a tag would wrap
 }
+async function doCopy(m, over){
+  await copy(m);
+  if (over) toast("Copied, but over the " + lim() + " character limit");
+  if (S.alt) flip = !flip;
+  renderOut();
+}
+function mkBubble(m){ const b = document.createElement("div"); b.className = "bubble"; b.textContent = gameRows(m).join("\n"); return b; }
+function mkCopy(m, over){ const b = document.createElement("button"); b.textContent = "Copy"; b.addEventListener("click", () => doCopy(m, over)); return b; }
 function renderOut(){
   checkTags();
-  const out = $("out"); out.textContent = "";
+  const out = $("out"), dock = $("dockbody"); out.textContent = ""; dock.textContent = "";
   const msgs = messages();
   $("tick").textContent = msgs.length ? msgs.join("     ") : "Add an item to see your message";
-  if (!msgs.length) { out.textContent = "Add an item to see your message."; return; }
+  if (!msgs.length) { out.textContent = "Add an item to see your message."; dock.textContent = "Add an item to see the preview."; return; }
   msgs.forEach(m => {
+    const len = [...m].length, over = len > lim();
+    // Message window: exact text that Copy sends
     const w = document.createElement("div"); w.className = "msg";
     const c = document.createElement("div");
-    const len = [...m].length, over = len > lim();
     const t = document.createElement("div"); t.className = "chat" + (over ? " over" : ""); t.textContent = m;
     const n = document.createElement("div"); n.className = "count" + (over ? " over" : "");
-    n.textContent = len + " / " + lim() + " characters" + (over ? ". Over the limit by " + (len - lim()) + ". Shorten names, drop an item, or turn off One item per row." : "");
-    const bub = document.createElement("div"); bub.className = "bubble";
-    bub.style.width = (rowW() * 0.013 + 22) + "px"; bub.textContent = (S.name.trim() ? S.name.trim() + " : " : "") + m;   // 13px Arial approximation of the game bubble
-    c.append(t, n, bub);
-    const b = document.createElement("button"); b.textContent = "Copy";
-    b.addEventListener("click", async () => { await copy(m); if (over) toast("Copied, but over the " + lim() + " character limit"); if (S.alt) flip = !flip; renderOut(); });
-    w.append(c, b); out.appendChild(w);
+    n.textContent = len + " / " + lim() + " characters" + (over ? ". Over the limit by " + (len - lim()) + ". Shorten names or drop an item." : "");
+    c.append(t, n); w.append(c, mkCopy(m, over)); out.appendChild(w);
+    // Fixed preview dock: game-style bubble, counter, copy
+    const d = document.createElement("div"); d.className = "dockmsg";
+    const k = document.createElement("div"); k.className = "count" + (over ? " over" : "");
+    k.textContent = len + " / " + lim() + (over ? " (over limit)" : "");
+    d.append(mkBubble(m), k, mkCopy(m, over)); dock.appendChild(d);
   });
 }
 
@@ -648,6 +716,15 @@ $("pdel").addEventListener("click", () => {
 });
 renderPresets();
 
+
+/* Preview dock: collapsible, remembered per browser */
+(function(){
+  const dock = $("dock"), btn = $("dockmin");
+  const set = min => { dock.classList.toggle("min", min); btn.textContent = min ? "Show" : "Hide"; btn.setAttribute("aria-expanded", String(!min)); };
+  let min = false; try { min = localStorage.getItem("mapleTradeChat.dockmin") === "1"; } catch (e) {}
+  set(min);
+  btn.addEventListener("click", () => { min = !min; set(min); try { localStorage.setItem("mapleTradeChat.dockmin", min ? "1" : "0"); } catch (e) {} });
+})();
 
 /* Theme toggle: starry night (default) or light */
 const THEMEKEY = "mapleTradeChat.theme";
