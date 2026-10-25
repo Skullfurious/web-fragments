@@ -1,4 +1,107 @@
 <!DOCTYPE html>
+<!--
+=====================================================================
+MAPLE TRADE CHAT  -  maintainer notes (read this first)
+=====================================================================
+PURPOSE
+  One static page (HTML + CSS + JS, no build step, no server, no libraries) that builds MapleStory trade chat
+  messages ("S> Ear INT 60% ...") from editable item/price lines, previews them, and copies them to the clipboard.
+  The owner pastes them into the game by hand; a browser page cannot type into the game.
+
+DEPLOYMENT (owner uses this)
+  GitHub Pages from a public repo (free plan requires public). File must be named index.html in the repo root.
+  Pages can take up to ~10 min to rebuild after a commit; use a hard refresh (Ctrl/Cmd+Shift+R) or a private window.
+  Everything runs client-side. Settings persist in localStorage under the key in KEY (currently mapleTradeChat.v3);
+  bumping the key resets all users to defaults. The Google Fonts <link> needs internet; fonts fall back gracefully.
+
+THEME
+  Two themes, switched by a button under the title and stored under localStorage key mapleTradeChat.theme
+  (applied by a tiny script in <head> before first paint). Default is "night": the first edition's starry dark look
+  (dark panels, gold text, Pixelify Sans pixel font, scattered star gradients, orange title bars). "day" is the
+  light look below. Night is implemented as overrides on :root[data-theme="night"] at the END of the style block.
+  The light theme is modeled on a screenshot of meso.watch (the site itself blocks automated access, so it was not fetched):
+  sky-blue background, cream cards with thick brown borders, orange title bars, Lilita One + Nunito fonts, pink
+  "Super Megaphone" ticker on top that scrolls the current message. Plain CSS variables are in :root.
+
+PAGE SECTIONS (top to bottom)
+  Presets  : save/load/delete named presets (see PRESETS below).
+  Lines    : message type toggle (Selling/Buying/Trading/Custom), item+price rows, add/clear, clipboard import.
+  Format   : name, line layout presets, one-item-per-row, fill character, row width, char limit, line template,
+             output mode, join string, tag-style checkboxes, tag style 1 and 2 (placed last so edits are close to
+             the Message window), and a tag-width warning that only appears when a tag would wrap.
+  Message  : what Copy will send, char counter vs limit (red when over), in-game style bubble preview (13px Arial).
+  Bump timer: seconds countdown, sound choice (Meso chime / Trade click, synthesized with WebAudio), volume
+             slider, optional per-second tick, Test sound button. Alerts by sound + tab-title flash.
+
+STATE (object S, saved to localStorage on every change)
+  type, custom, rows[{item,price}], tpl (line template), mode ("combined"|"separate"), sep, tagA, tagB, alt,
+  fit, rw, name, limit, fill, vol, snd, ticker.   "flip" (which tag style is next) is memory only.
+
+PRESETS
+  Stored in localStorage under PKEY (mapleTradeChat.presets.v1) as {name: snapshot}, separate from the live
+  settings (KEY) so bumping KEY does not erase presets. A snapshot holds the fields in PFIELDS: type, custom, rows,
+  tpl, mode, sep, tagA, tagB, alt, fit, rw, name, limit, fill. Sound/volume/ticker are deliberately excluded.
+  applyPreset() deep-copies fields into S, refreshes every bound input, rebuilds rows, and resets the tag flip.
+  Same name = overwrite. Per-browser only; no export/import yet (a good backlog item for moving between devices).
+  Default items are placeholders ("Item 1" 10K, "Item 2" 20K); the old Earring example is migrated on load.
+
+MESSAGE ENGINE (messages(), fitRows(), pad(), tw(), cwOf(), CW)
+  The game wraps chat by pixel width, so the page estimates text width with Arial advance widths (table CW,
+  units = 1/1000 em). One full row = rw * width("@") = 7 * 1015 = 7105 units (rw is user-tunable, decimals ok).
+  Combined + "One item per row": the message becomes segments (tag first, then each line split on {br}).
+  Each segment is word-wrapped greedily by estimated width, and the LAST row of every segment except the final one
+  is padded with the fill character so the next segment must start on a new row. The first row also includes
+  the sender prefix "Name :" (S.name), measured but not emitted.
+  Template tokens: {item} {price} (line template); {br} forces a new row; {gap} puts text before it at the left
+  edge and text after it at the right edge using regular spaces (falls back to normal wrapping if too wide).
+  Tag tokens: {type} (Selling/Buying/Trading/custom text) and {t} (its first letter, uppercase).
+  Tag style 1/2 alternate after every Copy (S.alt) so back-to-back posts differ. Short tags checkbox sets the
+  styles to "{t}>" and "{t}>>"; unchecked sets "<<<{type}>>>" and "<<{type}>>".
+  Clipboard import parses "TAG item <<<price>>>" patterns (old and new formats, quoted or not) back into rows.
+
+IN-GAME FINDINGS (reported by the owner from screenshots/tests; widths are estimates, not measurements of the real font)
+  - Chat limit is 70 characters (owner-reported). The page flags messages over S.limit (code points counted).
+  - Bubble text is centered and wraps by pixel width; the first row begins with "Name :".
+  - About 7 "@" fill a row (owner), 8 "ㅡ" (U+3161) fill a row, 12 "_" fill a row. ㅡ is assumed 880 units wide.
+  - "Earring INT 60%" is just too wide for one row (about 7.3 @); "Ear INT 60%" fits. Lowercase is narrower.
+  - '<<<Trading>>>' fits (about 6.8 @) but "'<<<Trading>>>'" (about 7.2 @) wraps; hence tag style 2 = "<<{type}>>".
+  - A "60%" can split into "60" and "%" across rows, so keep item text short.
+  - Hangul Filler (U+3164, invisible) was tried as row padding. Rows it was meant to fill did NOT break (items ended
+    up joined on one row), so it behaves as roughly zero width here. It is no longer used. It may still "do something"
+    as a leading spacer or anchor; untested.
+  - Multiple regular spaces between two periods were preserved and held a row open (owner's ". <spaces> ." test),
+    which is why the default fill is now Blank (spaces). NOT yet verified for padding at the END of a row, where the
+    game might trim trailing spaces. If rows still run together, switch the fill to ㅡ, which is verified.
+  - Spaces are narrow (about 278 units), so Blank fill uses roughly 3x more characters than ㅡ and can push a
+    message past the 70-character limit quickly. This is the main tradeoff to revisit.
+
+KNOWN ISSUES / OPEN QUESTIONS
+  - Does the 70-character limit include the "Name :" prefix? The page counts only the message.
+  - Blank fill reliability at row ends is unverified (see above). A calibration idea: ". " + N spaces + "." and
+    find the largest N that keeps both periods on one row, then compare with the estimate.
+  - The Message preview is far down the page on small screens; it could be made sticky or moved.
+  - The in-page bubble preview uses the browser's font, so it only approximates the game.
+  - Sounds are synthesized lookalikes, not game audio (game audio is copyrighted and was not available).
+
+BACKLOG IDEAS (not built)
+  Named saved lists; per-item percent field; abbreviation list (Earring -> Ear); divider row option; centered
+  "bordered" row layout using period anchors; auto-trim fill when over the limit; optional mute for the timer.
+
+COLLABORATION NOTES FROM THE OWNER'S PREFERENCES
+  No flattery, realistic grounded advice, cite sources when unsure, explain steps briefly for a beginner,
+  explain CLI flags, put multiple questions in a bulleted list at the end, avoid "it's not X, it's Y" phrasing.
+  The owner is token-limited, so keep changes small and say clearly what is unverified.
+
+CHANGELOG (newest first)
+  v3.2: starry night theme restored as the default, with a toggle to the light theme.
+  v3.1: presets (save/load/delete); placeholder default items.
+  v3 : name default "Mapler"; fill default Blank (spaces); invisible filler removed; {gap} uses spaces; Format
+       window reordered (tag styles last, checkboxes side by side, tag warning only when needed); storage key v3.
+  v2 : 70-char limit flag, fill character option, tag-width warning, invisible-filler experiment.
+  earlier: name-aware first row, {br}/{gap}, short-tag checkbox, row fitting, bubble preview, timer with
+       sounds and volume, meso.watch-style theme, type toggle and alternating tag styles.
+=====================================================================
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -6,96 +109,177 @@
 <title>Maple Trade Chat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700&family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;700&family=Lilita+One&family=Pixelify+Sans:wght@400;700&display=swap" rel="stylesheet">
+<script>
+// Theme is stored separately from the other settings. "night" = starry (default), "day" = meso.watch-style light.
+try { document.documentElement.dataset.theme = localStorage.getItem("mapleTradeChat.theme") === "day" ? "day" : "night"; }
+catch (e) { document.documentElement.dataset.theme = "night"; }
+</script>
 <style>
 :root{
-  --bg:#0e1a26; --panel:#1a2a38; --field:#0f1c28; --edge:#3a5368;
-  --maple:#f08a24; --maple-d:#c2650f; --meso:#ffd45e; --text:#e8eef3; --muted:#8fa6b8;
-  --pixel:"Pixelify Sans","Courier New",monospace; --body:"Nunito","Trebuchet MS",sans-serif;
+  --sky:#86cbff; --sky2:#c5e8ff; --cream:#fff4de; --field:#fffbf2; --brown:#5b3a1a; --edge:#7a4a1e;
+  --shadow:#a8733a; --muted:#8d6a45; --maple:#f68b1f; --maple-d:#e0700a; --gold:#f3b81f;
+  --pink:#f08ad6; --plum:#6b2d7a;
+  --display:"Lilita One","Trebuchet MS",sans-serif; --body:"Nunito","Trebuchet MS",sans-serif;
 }
 *{box-sizing:border-box}
-html{scroll-padding-top:12px}
 body{
-  margin:0; min-height:100vh; color:var(--text); font:500 16px/1.5 var(--body);
+  margin:0; min-height:100vh; color:var(--brown); font:700 16px/1.5 var(--body);
+  background:radial-gradient(ellipse 60% 30% at 20% 12%,#fff9 0,transparent 70%),
+             radial-gradient(ellipse 50% 25% at 85% 30%,#fff7 0,transparent 70%),
+             linear-gradient(var(--sky),var(--sky2));
+  background-attachment:fixed; padding:0 16px 64px;
+}
+.mega{display:flex;margin:0 -16px;height:34px;align-items:stretch;background:#fff}
+.mega .tag{background:var(--plum);color:#fff;font:700 14px/34px var(--body);padding:0 14px;white-space:nowrap;z-index:1}
+.mega .strip{flex:1;overflow:hidden;background:linear-gradient(90deg,#f6a3df,var(--pink));color:#3b1240;font:700 15px/34px var(--body);white-space:nowrap}
+#tick{display:inline-block;padding-left:14px}
+@media (prefers-reduced-motion:no-preference){
+  #tick{padding-left:100%;animation:scroll 22s linear infinite}
+  @keyframes scroll{to{transform:translateX(-100%)}}
+}
+header{max-width:760px;margin:0 auto;padding:28px 0 20px}
+h1{
+  font:400 44px/1 var(--display);margin:0;color:#ffb02e;letter-spacing:.5px;
+  text-shadow:3px 0 0 var(--brown),-3px 0 0 var(--brown),0 3px 0 var(--brown),0 -3px 0 var(--brown),
+    2px 2px 0 var(--brown),-2px 2px 0 var(--brown),2px -2px 0 var(--brown),-2px -2px 0 var(--brown),0 6px 0 var(--brown);
+}
+header p{margin:14px 0 0;color:var(--brown)}
+main{max-width:760px;margin:0 auto;display:grid;gap:18px}
+.win{background:var(--cream);border:3px solid var(--edge);border-radius:16px;overflow:hidden;box-shadow:0 5px 0 var(--shadow)}
+.bar{background:linear-gradient(var(--maple),var(--maple-d));color:#fff;font:400 20px/1 var(--display);padding:11px 16px;text-shadow:0 2px 0 #8a3f00}
+.body{padding:16px}
+input,select{
+  width:100%;background:var(--field);color:var(--brown);border:3px solid var(--edge);border-radius:12px;
+  padding:8px 12px;font:inherit;min-width:0;
+}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--gold);outline-offset:1px}
+label{display:block;font-weight:800;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.row{display:grid;grid-template-columns:1fr 110px 42px;gap:8px;margin-bottom:8px}
+.row .x{padding:0}
+button{
+  font:400 17px var(--display);color:#fff;background:linear-gradient(var(--maple),var(--maple-d));
+  border:3px solid var(--edge);border-bottom-width:5px;border-radius:12px;padding:6px 16px;cursor:pointer;
+  text-shadow:0 2px 0 #8a3f00;
+}
+button:active{transform:translateY(2px);border-bottom-width:3px}
+button.alt{background:var(--field);color:var(--brown);text-shadow:none}
+button.x{background:var(--field);color:#c0392b;text-shadow:none}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.grid3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
+.hint{font-size:13px;color:var(--muted);margin:10px 0 0}
+.msg{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;margin-bottom:8px}
+.chat{
+  background:linear-gradient(90deg,#f6a3df,var(--pink));border:3px solid var(--plum);border-radius:12px;
+  padding:8px 12px;color:#3b1240;font:700 15px/1.4 var(--body);word-break:break-word;min-height:44px;
+}
+.count{font-size:13px;color:var(--muted);margin-top:4px}
+.timer{display:flex;flex-wrap:wrap;align-items:end;gap:10px}
+.timer .f{width:110px}
+#clock{font:400 32px var(--display);color:var(--maple-d);min-width:90px}
+@media (prefers-reduced-motion:no-preference){
+  .pulse{animation:pulse .7s ease-in-out infinite alternate}
+  @keyframes pulse{to{transform:scale(1.1)}}
+}
+#toast{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--plum);color:#fff;
+  font-weight:800;padding:10px 20px;border-radius:12px;border:3px solid #4a1d56;opacity:0;pointer-events:none;transition:opacity .2s;
+}
+#toast.on{opacity:1}
+@media (max-width:560px){
+  .row{grid-template-columns:1fr 84px 42px}
+  .grid2{grid-template-columns:1fr}
+  .grid3{grid-template-columns:1fr}
+  .msg{grid-template-columns:1fr}
+  h1{font-size:36px}
+}
+.seg{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chk{display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;margin:12px 0 0}
+input[type=checkbox]{width:20px;height:20px;accent-color:var(--maple)}
+.snd{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:end;gap:14px}
+.snd select{width:150px}
+.snd .chk{margin:0 0 8px}
+input[type=range]{width:150px;padding:0;border:0;background:none;accent-color:var(--maple)}
+.bubble{background:#f4f4f4;border:2px solid #9aa4ad;border-radius:10px;color:#222;font:13px/1.25 Arial,Helvetica,sans-serif;text-align:center;padding:6px 8px;margin-top:8px;overflow-wrap:anywhere;max-width:100%}
+.chat.over{border-color:#c0392b;box-shadow:0 0 0 2px #c0392b}
+.count.over{color:#c0392b;font-weight:800}
+.checks{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.checks .chk{margin:0}
+.prow{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:end}
+.prow button{padding:7px 14px}
+/* Starry night theme (the first edition's look). Overrides the light variables above. */
+:root[data-theme="night"]{
+  --cream:#1a2a38; --field:#0f1c28; --brown:#e8eef3; --edge:#3a5368; --shadow:#0a141d;
+  --muted:#8fa6b8; --gold:#ffd45e; --maple:#f08a24; --maple-d:#c2650f;
+  --display:"Pixelify Sans","Courier New",monospace;
+}
+:root[data-theme="night"] body{
   background:
     radial-gradient(1.5px 1.5px at 12% 18%,#fff8 50%,transparent 51%),
     radial-gradient(1px 1px at 38% 8%,#fff7 50%,transparent 51%),
     radial-gradient(2px 2px at 71% 22%,#ffd45eaa 50%,transparent 51%),
     radial-gradient(1px 1px at 88% 12%,#fff7 50%,transparent 51%),
     radial-gradient(1.5px 1.5px at 55% 35%,#fff6 50%,transparent 51%),
+    radial-gradient(1px 1px at 24% 46%,#fff6 50%,transparent 51%),
+    radial-gradient(1.5px 1.5px at 93% 52%,#fff7 50%,transparent 51%),
+    radial-gradient(1px 1px at 6% 70%,#fff6 50%,transparent 51%),
+    radial-gradient(2px 2px at 47% 78%,#ffd45e88 50%,transparent 51%),
+    radial-gradient(1px 1px at 80% 88%,#fff6 50%,transparent 51%),
     linear-gradient(#0a1420,#12283a 60%,#17363a);
   background-attachment:fixed;
-  padding:0 16px 64px;
 }
-header{max-width:760px;margin:0 auto;padding:32px 0 20px}
-h1{font:700 34px/1.1 var(--pixel);margin:0;color:var(--meso);text-shadow:0 3px 0 #7a4a08}
-header p{margin:6px 0 0;color:var(--muted)}
-main{max-width:760px;margin:0 auto;display:grid;gap:18px}
-.win{background:var(--panel);border:2px solid var(--edge);border-radius:10px;overflow:hidden;box-shadow:0 6px 0 #0a141d}
-.bar{background:linear-gradient(var(--maple),var(--maple-d));color:#fff;font:700 17px/1 var(--pixel);padding:9px 14px;text-shadow:0 1px 0 #7a3d00}
-.body{padding:14px}
-input,select{
-  width:100%;background:var(--field);color:var(--text);border:2px solid var(--edge);border-radius:6px;
-  padding:8px 10px;font:inherit;min-width:0;
-}
-input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--meso);outline-offset:1px}
-label{display:block;font-weight:700;font-size:14px;color:var(--muted);margin-bottom:4px}
-.row{display:grid;grid-template-columns:110px 1fr 100px 40px;gap:8px;margin-bottom:8px}
-.row .x{padding:0}
-button{
-  font:700 15px var(--body);color:#2a1600;background:var(--meso);border:2px solid #b8891d;border-bottom-width:4px;
-  border-radius:8px;padding:7px 14px;cursor:pointer;
-}
-button:active{transform:translateY(2px);border-bottom-width:2px}
-button.alt{background:var(--field);color:var(--text);border-color:var(--edge)}
-button.x{background:var(--field);color:#ff8f8f;border-color:var(--edge)}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
-.grid3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px}
-.hint{font-size:13px;color:var(--muted);margin:8px 0 0}
-.msg{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:start;margin-bottom:8px}
-.chat{
-  background:#000a;border:2px solid #000;border-radius:6px;padding:8px 10px;
-  color:var(--meso);font:500 15px/1.4 var(--pixel);word-break:break-word;min-height:42px;
-}
-.count{font-size:13px;color:var(--muted);margin-top:4px}
-.timer{display:flex;flex-wrap:wrap;align-items:end;gap:10px}
-.timer .f{width:110px}
-#clock{font:700 28px var(--pixel);color:var(--meso);min-width:90px}
-.due{background:#ffd45e;color:#2a1600}
-@media (prefers-reduced-motion:no-preference){
-  .pulse{animation:pulse .7s ease-in-out infinite alternate}
-  @keyframes pulse{to{transform:scale(1.08)}}
-}
-#toast{
-  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--meso);color:#2a1600;
-  font-weight:700;padding:8px 18px;border-radius:20px;opacity:0;pointer-events:none;transition:opacity .2s;
-}
-#toast.on{opacity:1}
-@media (max-width:560px){
-  .row{grid-template-columns:1fr 1fr 40px}
-  .row .it{grid-column:1/-1;order:3}
-  .grid3{grid-template-columns:1fr}
-  .msg{grid-template-columns:1fr}
-}
+:root[data-theme="night"] h1{color:var(--gold);text-shadow:0 3px 0 #7a4a08;font-weight:700}
+:root[data-theme="night"] .win{border-width:2px;border-radius:10px;box-shadow:0 6px 0 #0a141d}
+:root[data-theme="night"] .bar{font-weight:700}
+:root[data-theme="night"] button.x{color:#ff8f8f}
+:root[data-theme="night"] .chat{background:#000a;border:2px solid #000;color:var(--gold);font:500 15px/1.4 "Pixelify Sans","Courier New",monospace}
+:root[data-theme="night"] .chat.over{border-color:#ff8f8f;box-shadow:0 0 0 2px #ff8f8f}
+:root[data-theme="night"] .count.over{color:#ff8f8f}
+:root[data-theme="night"] #clock{color:var(--gold)}
+:root[data-theme="night"] button:not(.alt):not(.x){color:#2a1600;background:var(--gold);border-color:#b8891d;text-shadow:none}
+.themebtn{margin-top:12px;padding:5px 14px;font-size:15px}
 </style>
 </head>
 <body>
+<div class="mega"><span class="tag">📢 Super Megaphone</span><div class="strip"><span id="tick"></span></div></div>
 <header>
   <h1>Maple Trade Chat</h1>
   <p>Build your selling and buying lines, copy them, paste them in game.</p>
+  <button id="theme" class="alt themebtn" type="button"></button>
 </header>
 
 <main>
   <section class="win">
+    <div class="bar">Presets</div>
+    <div class="body">
+      <div class="prow">
+        <div><label for="pname">Preset name</label><input id="pname" placeholder="e.g. Scrolls for sale"></div>
+        <button id="psave">Save preset</button>
+      </div>
+      <div class="prow" style="margin-top:10px">
+        <div><label for="plist">Saved presets</label><select id="plist"></select></div>
+        <button id="pload" class="alt">Load</button>
+        <button id="pdel" class="alt">Delete</button>
+      </div>
+      <p class="hint">A preset stores the message type, items and prices, name, layout, fill, tag styles and other format settings. It does not store timer sounds or volume. Saving with an existing name replaces it. Presets live in this browser only, so they will not appear on another device or browser, and clearing site data removes them.</p>
+    </div>
+  </section>
+
+  <section class="win">
     <div class="bar">Lines</div>
     <div class="body">
+      <label for="types">Message type</label>
+      <div class="seg" id="types" role="group" aria-label="Message type"></div>
+      <input id="custom" placeholder="Custom tag text, e.g. Trading Scrolls" hidden>
+      <label style="margin-top:14px">Items</label>
       <div id="rows"></div>
       <div class="actions">
         <button id="add">+ Add line</button>
         <button id="paste" class="alt">Import from clipboard</button>
         <button id="clear" class="alt">Clear all</button>
       </div>
-      <p class="hint">Import reads text like &lt;&lt;Selling&gt;&gt; ITEM &lt;&lt;&lt;100K&gt;&gt;&gt; and turns it back into editable lines. Your browser will ask for clipboard permission.</p>
+      <p class="hint">Import reads a message like &lt;&lt;&lt;Selling&gt;&gt;&gt; ITEM &lt;&lt;&lt;100K&gt;&gt;&gt; and turns it back into editable lines. Your browser will ask for clipboard permission.</p>
     </div>
   </section>
 
@@ -103,12 +287,32 @@ button.x{background:var(--field);color:#ff8f8f;border-color:var(--edge)}
     <div class="bar">Format</div>
     <div class="body">
       <div class="grid3">
+        <div><label for="cname">Your character name</label><input id="cname" placeholder="e.g. Mapler"></div>
+        <div><label for="lay">Line layout</label><select id="lay"><option value="">Choose a layout…</option><option value="two">Item row, price row</option><option value="frame">Item row, framed price</option><option value="split">Item left, price right</option><option value="one">All on one line</option></select></div>
+        <label class="chk" style="margin-top:22px"><input type="checkbox" id="fit"> One item per row</label>
+      </div>
+      <div class="grid3" style="margin-top:12px">
+        <div><label for="fill">Fill character</label><select id="fill"><option value=" ">Blank (spaces)</option><option value="ㅡ">ㅡ (8 fill a row)</option><option value="_">_ (12 fill a row)</option><option value="@">@ (7 fill a row)</option></select></div>
+        <div><label for="rw">@ per full row</label><input id="rw" type="number" min="3" max="12" step="0.1"></div>
+        <div><label for="lim">Character limit</label><input id="lim" type="number" min="10" max="500" step="1"></div>
+      </div>
+      <p class="hint">One item per row measures each piece of text and pads the rest of the row with the fill character, so the next item starts on a fresh row. The game shows your name at the start of the first row, so it counts against that row. Widths are estimates: if rows do not line up in game, change “@ per full row” (decimals work). Fill characters count toward the character limit, and an over-limit message is flagged in red. Blank needs the most characters and ㅡ the fewest.</p>
+      <div class="grid3" style="margin-top:12px">
         <div><label for="tpl">Line template</label><input id="tpl"></div>
         <div><label for="mode">Output</label>
           <select id="mode"><option value="combined">One message</option><option value="separate">One per line</option></select></div>
         <div><label for="sep">Join with</label><input id="sep"></div>
       </div>
-      <p class="hint">Template placeholders: {type} {item} {price}. Join applies to “One message”.</p>
+      <p class="hint">Template: {item} {price}. {br} starts a new row and {gap} pushes the text after it to the right edge of the row. Tag styles use {type} or {t} (first letter). The tag appears once per message, and the style switches after each copy when that box is checked.</p>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" id="alt"> Switch between tag style 1 and 2 after every copy</label>
+        <label class="chk"><input type="checkbox" id="short"> Short tags (S&gt;)</label>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <div><label for="tagA">Tag style 1</label><input id="tagA"></div>
+        <div><label for="tagB">Tag style 2</label><input id="tagB"></div>
+      </div>
+      <p class="hint" id="tagchk" hidden></p>
     </div>
   </section>
 
@@ -120,26 +324,40 @@ button.x{background:var(--field);color:#ff8f8f;border-color:var(--edge)}
   <section class="win">
     <div class="bar">Bump timer</div>
     <div class="body timer">
-      <div class="f"><label for="mins">Minutes</label><input id="mins" type="number" min="0.1" step="0.5" value="5"></div>
+      <div class="f"><label for="mins">Seconds</label><input id="mins" type="number" min="1" step="1" value="2"></div>
       <button id="start">Start</button>
       <button id="stop" class="alt">Stop</button>
       <div id="clock">--:--</div>
-      <p class="hint" style="flex-basis:100%;margin:0">Beeps and flashes the tab title when it’s time to post again, then restarts. Allow the tab to play sound.</p>
+      <div class="snd">
+        <div><label for="snd">Sound</label><select id="snd"><option value="coin">Meso chime</option><option value="click">Trade click</option></select></div>
+        <div><label for="vol">Volume</label><input id="vol" type="range" min="0" max="100" step="1"></div>
+        <label class="chk"><input type="checkbox" id="tk"> Tick every second</label>
+        <button id="test" class="alt">Test sound</button>
+      </div>
+      <p class="hint" style="flex-basis:100%;margin:0">Plays your chosen sound and flashes the tab title when it’s time to post again, then restarts. The sounds are generated in your browser, so they are lookalikes and not the game’s own audio. Browsers keep sound off until you click Start or Test sound.</p>
     </div>
   </section>
 </main>
 <div id="toast" role="status"></div>
-<datalist id="types"><option>Selling</option><option>Buying</option><option>Trading</option></datalist>
 
 <script>
+// See the maintainer notes at the top of this file for the design, settings, and in-game findings.
 const $ = id => document.getElementById(id);
-const KEY = "mapleTradeChat.v1";
+const KEY = "mapleTradeChat.v3";   // bumped so everyone starts from the new defaults
+const TYPES = ["Selling", "Buying", "Trading", "Custom"];
 let S = {
-  rows: [{type:"Selling",item:"EARRING LUK",price:"100K"},{type:"Selling",item:"EARING INT",price:"80K"}],
-  tpl: "<<{type}>> {item} <<<{price}>>>", mode: "combined", sep: " "
+  type: "Selling", custom: "",
+  rows: [{item:"Item 1",price:"10K"},{item:"Item 2",price:"20K"}],
+  tpl: "{item} <<<{price}>>>", mode: "combined", sep: " ",
+  tagA: "<<<{type}>>>", tagB: "<<{type}>>", alt: true, vol: 0.4, snd: "coin", ticker: false, fit: true, rw: 7, name: "Mapler", limit: 70, fill: " "
 };
-try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved && saved.rows) S = saved; } catch (e) {}
+try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && v.rows) S = Object.assign(S, v); } catch (e) {}
+if (S.tagB === "'<<<{type}>>>'") S.tagB = "<<{type}>>";
+// Replace the old built-in example items with placeholders (only if the user never edited them)
+if (S.rows.length === 2 && /^EARRING LUK/.test(S.rows[0].item) && /^EARING INT/.test(S.rows[1].item))
+  S.rows = [{item:"Item 1",price:"10K"},{item:"Item 2",price:"20K"}];
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+let flip = false; // false = tag style 1 is used for the next copy
 
 function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("on"); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove("on"),1400); }
 
@@ -149,43 +367,121 @@ async function copy(text){
   toast("Copied");
 }
 
+function buildTypes(){
+  const box = $("types"); box.textContent = "";
+  TYPES.forEach(t => {
+    const b = document.createElement("button");
+    b.textContent = t; b.className = S.type === t ? "" : "alt"; b.setAttribute("aria-pressed", S.type === t);
+    b.addEventListener("click", () => { S.type = t; buildTypes(); update(); });
+    box.appendChild(b);
+  });
+  $("custom").hidden = S.type !== "Custom";
+}
+
 function buildRows(){
   const box = $("rows"); box.textContent = "";
   S.rows.forEach((r, i) => {
     const d = document.createElement("div"); d.className = "row";
-    const mk = (cls, key, ph, list) => {
+    const mk = (key, ph) => {
       const inp = document.createElement("input");
       inp.value = r[key]; inp.placeholder = ph; inp.setAttribute("aria-label", ph);
-      if (cls) inp.className = cls;
-      if (list) inp.setAttribute("list", list);
+      if (key === "item") inp.className = "it";
       inp.addEventListener("input", () => { r[key] = inp.value; update(); });
       return inp;
     };
     const x = document.createElement("button");
     x.className = "x"; x.textContent = "✕"; x.setAttribute("aria-label", "Remove line");
     x.addEventListener("click", () => { S.rows.splice(i, 1); buildRows(); update(); });
-    d.append(mk("", "type", "Type", "types"), mk("it", "item", "Item"), mk("", "price", "Price"), x);
+    d.append(mk("item", "Item"), mk("price", "Price"), x);
     box.appendChild(d);
   });
 }
 
+const CW = {" ":278,"!":278,'"':355,"#":556,"$":556,"%":889,"&":667,"'":191,"(":333,")":333,"*":389,"+":584,",":278,"-":333,".":278,"/":278,":":278,";":278,"<":584,"=":584,">":584,"?":556,"@":1015,"[":278,"\\":278,"]":278,"^":469,"_":556,"`":333,"{":334,"|":260,"}":334,"~":584};
+[667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611].forEach((w, i) => CW[String.fromCharCode(65 + i)] = w);
+[556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500].forEach((w, i) => CW[String.fromCharCode(97 + i)] = w);
+for (let d = 0; d < 10; d++) CW[String(d)] = 556;
+CW["ㅡ"] = 880;  // measured in game: 8 of these fill one row (7 @ = 7105 units)
+// Other Hangul compatibility jamo are assumed to share that width; everything else unknown defaults to 600
+// Width of one character in 1/1000 em. Hangul jamo are assumed to match the measured ㅡ; unknown characters default to 600
+const cwOf = c => CW[c] || (c >= "\u3130" && c <= "\u318f" ? 880 : 600);
+const tw = str => [...str].reduce((a, c) => a + cwOf(c), 0);
+const rowW = () => (parseFloat(S.rw) || 7) * CW["@"];
+// Greedy word wrap into rows, returning [text, width] pairs
+function fitRows(text, W){
+  const rows = []; let cur = "", w = 0;
+  for (const word of text.split(" ").filter(Boolean)) {
+    const ww = tw(word);
+    if (cur && w + CW[" "] + ww <= W) { cur += " " + word; w += CW[" "] + ww; }
+    else { if (cur) rows.push([cur, w]); cur = word; w = ww; }
+  }
+  if (cur) rows.push([cur, w]);
+  return rows;
+}
+// Fill the remaining width of a row with @ (rounded down so it never overflows)
+const pad = (txt, w, W) => txt + S.fill.repeat(Math.max(0, Math.floor((W - w) / cwOf(S.fill))));
+const lim = () => parseInt(S.limit) || 70;
+const typeText = () => S.type === "Custom" ? (S.custom.trim() || "Custom") : S.type;
+const tag = () => (S.alt && flip ? S.tagB : S.tagA).replace(/\{type\}/g, typeText()).replace(/\{t\}/g, typeText().charAt(0).toUpperCase());
 function lines(){
   return S.rows.filter(r => r.item.trim())
     .map(r => S.tpl.replace(/\{(\w+)\}/g, (m, k) => (k in r ? r[k] : m)));
 }
+function messages(){
+  const L = lines(), t = tag();
+  if (!L.length) return [];
+  const flat = l => l.replace(/\{br\}|\{gap\}/g, " ");
+  if (S.mode !== "combined") return L.map(l => [t, flat(l)].filter(Boolean).join(" "));
+  if (!S.fit) return [[t, L.map(flat).join(S.sep)].filter(Boolean).join(" ")];
+  const W = rowW(), name = (S.name || "").trim(), pre = name ? name + " :" : "";
+  const segs = [];                       // each segment ends its own row
+  if (t) segs.push(t);
+  L.forEach(l => l.split("{br}").forEach(p => { if (p.trim()) segs.push(p.trim()); }));
+  const out = segs.map((sg, i) => {
+    const k = sg.indexOf("{gap}");
+    if (k >= 0) {   // text before {gap} stays left, text after it goes to the right edge, invisible fill in between
+      const a = sg.slice(0, k).trim(), b = sg.slice(k + 5).replace(/\{gap\}/g, " ").trim();
+      const n = Math.floor((W - (i === 0 && pre ? tw(pre) + CW[" "] : 0) - tw(a) - tw(b)) / CW[" "]);
+      if (n >= 2) return a + " ".repeat(n) + b;
+      sg = (a + " " + b).trim();   // too wide to share one row, so it wraps normally
+    }
+    // the first row of a message starts with "Name :", so measure it as part of that row
+    const rows = fitRows(i === 0 && pre ? pre + " " + sg : sg, W);
+    if (i === 0 && pre) { rows[0][0] = rows[0][0].slice(pre.length).trim(); if (!rows[0][0]) rows.shift(); }
+    return rows.map(([txt, w], k) => (k === rows.length - 1 && i < segs.length - 1) ? pad(txt, w, W) : txt).join(" ");
+  });
+  return [out.join(" ")];
+}
 
+// Warn when a tag is wider than one row for any standard type, since a wrapped tag looks broken in game
+function checkTags(){
+  const W = rowW(), names = ["Selling", "Buying", "Trading"], bad = [];
+  if (S.type === "Custom") names.push(typeText());
+  [[S.tagA, "1"], [S.tagB, "2"]].forEach(([tpl, n]) => names.forEach(nm => {
+    const w = tw(tpl.replace(/\{type\}/g, nm).replace(/\{t\}/g, nm.charAt(0).toUpperCase()));
+    if (w > W) bad.push("style " + n + " with " + nm + " (" + (w / CW["@"]).toFixed(1) + " @ wide)");
+  }));
+  $("tagchk").textContent = bad.length ? "Too wide for one row: " + bad.join(", ") + ". Shorten it." : "";
+  $("tagchk").hidden = !bad.length;   // only shown when a tag would wrap
+}
 function renderOut(){
+  checkTags();
   const out = $("out"); out.textContent = "";
-  const L = lines();
-  const msgs = !L.length ? [] : S.mode === "combined" ? [L.join(S.sep)] : L;
+  const msgs = messages();
+  $("tick").textContent = msgs.length ? msgs.join("     ") : "Add an item to see your message";
   if (!msgs.length) { out.textContent = "Add an item to see your message."; return; }
   msgs.forEach(m => {
     const w = document.createElement("div"); w.className = "msg";
     const c = document.createElement("div");
-    const t = document.createElement("div"); t.className = "chat"; t.textContent = m;
-    const n = document.createElement("div"); n.className = "count"; n.textContent = m.length + " characters";
-    c.append(t, n);
-    const b = document.createElement("button"); b.textContent = "Copy"; b.addEventListener("click", () => copy(m));
+    const len = [...m].length, over = len > lim();
+    const t = document.createElement("div"); t.className = "chat" + (over ? " over" : ""); t.textContent = m;
+    const n = document.createElement("div"); n.className = "count" + (over ? " over" : "");
+    n.textContent = len + " / " + lim() + " characters" + (over ? ". Over the limit by " + (len - lim()) + ". Shorten names, drop an item, or turn off One item per row." : "");
+    const bub = document.createElement("div"); bub.className = "bubble";
+    bub.style.width = (rowW() * 0.013 + 22) + "px"; bub.textContent = (S.name.trim() ? S.name.trim() + " : " : "") + m;   // 13px Arial approximation of the game bubble
+    c.append(t, n, bub);
+    const b = document.createElement("button"); b.textContent = "Copy";
+    b.addEventListener("click", async () => { await copy(m); if (over) toast("Copied, but over the " + lim() + " character limit"); if (S.alt) flip = !flip; renderOut(); });
     w.append(c, b); out.appendChild(w);
   });
 }
@@ -193,62 +489,178 @@ function renderOut(){
 function update(){ save(); renderOut(); }
 
 $("add").addEventListener("click", () => {
-  const last = S.rows[S.rows.length - 1];
-  S.rows.push({type: last ? last.type : "Selling", item: "", price: ""});
+  S.rows.push({item: "", price: ""});
   buildRows(); update();
   const ins = document.querySelectorAll("#rows .it"); ins[ins.length - 1].focus();
 });
-$("clear").addEventListener("click", () => { S.rows = [{type:"Selling",item:"",price:""}]; buildRows(); update(); });
+$("clear").addEventListener("click", () => { S.rows = [{item:"",price:""}]; buildRows(); update(); });
 
 $("paste").addEventListener("click", async () => {
   let txt;
   try { txt = await navigator.clipboard.readText(); }
   catch (e) { toast("Clipboard blocked. Allow access for this site."); return; }
-  const re = /<<\s*([^<>]+?)\s*>>\s*([^<>]+?)\s*<<<\s*([^<>]+?)\s*>>>/g;
-  const found = [...txt.matchAll(re)].map(m => ({type:m[1], item:m[2], price:m[3]}));
+  let t = txt.replace(/\s+/g, " ").trim(), type = null;
+  const head = t.match(/^'?<{2,3}\s*([^<>]+?)\s*>{2,3}'?\s*/);   // leading tag, with or without quotes
+  if (head) { type = head[1]; t = t.slice(head[0].length); }
+  t = t.replace(/'?<{2,3}\s*(selling|buying|trading)\s*>{2,3}'?/gi, " "); // repeated tags from older messages
+  const found = [...t.matchAll(/([^<>]+?)\s*<<<\s*([^<>]+?)\s*>>>/g)]
+    .map(m => ({item: m[1].replace(/^[\s,;|]+/, "").trim(), price: m[2]}))
+    .filter(r => r.item);
   if (!found.length) { toast("No trade lines found in clipboard"); return; }
+  if (type) {
+    const known = TYPES.find(x => x.toLowerCase() === type.toLowerCase() && x !== "Custom");
+    if (known) S.type = known; else { S.type = "Custom"; S.custom = type; $("custom").value = type; }
+    buildTypes();
+  }
   S.rows = found; buildRows(); update(); toast("Imported " + found.length + " lines");
 });
 
-[["tpl","tpl"],["mode","mode"],["sep","sep"]].forEach(([id, key]) => {
+[["tpl","tpl"],["mode","mode"],["sep","sep"],["tagA","tagA"],["tagB","tagB"],["custom","custom"],["cname","name"],["fill","fill"],["lim","limit"]].forEach(([id, key]) => {
   $(id).value = S[key];
   $(id).addEventListener("input", () => { S[key] = $(id).value; update(); });
+});
+$("alt").checked = S.alt;
+$("alt").addEventListener("change", () => { S.alt = $("alt").checked; flip = false; update(); });
+$("rw").value = S.rw; $("rw").addEventListener("input", () => { S.rw = $("rw").value; update(); });
+$("fit").checked = S.fit; $("fit").addEventListener("change", () => { S.fit = $("fit").checked; update(); });
+// Checked = short tags (S> / S>>), unchecked = long tags (<<<Selling>>> / '<<<Selling>>>')
+const SHORT = ["{t}>", "{t}>>"], LONG = ["<<<{type}>>>", "<<{type}>>"];
+const syncShort = () => { $("short").checked = S.tagA === SHORT[0] && S.tagB === SHORT[1]; };
+$("short").addEventListener("change", () => {
+  [S.tagA, S.tagB] = $("short").checked ? SHORT : LONG;
+  $("tagA").value = S.tagA; $("tagB").value = S.tagB; update();
+});
+["tagA", "tagB"].forEach(id => $(id).addEventListener("input", syncShort));  // editing a tag box by hand updates the checkbox
+syncShort();
+$("lay").addEventListener("change", () => {
+  const p = {two: "{item}{br}{price}", frame: "{item}{br}|----{price}----|", split: "{item}{gap}{price}", one: "{item} {price}"}[$("lay").value];
+  if (!p) return;
+  S.tpl = p; $("tpl").value = p; $("lay").value = ""; update();
 });
 
 /* Bump timer */
 let tick = null, endAt = 0, ctx = null, flash = null;
 const baseTitle = document.title;
 const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
-function beep(){
-  if (!ctx) return;
-  const o = ctx.createOscillator(); o.frequency.value = 880; o.connect(ctx.destination);
-  o.start(); o.stop(ctx.currentTime + 0.25);
+let master = null, lastSec = null;
+function ensureAudio(){
+  if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); master = ctx.createGain(); master.connect(ctx.destination); }
+  if (ctx.state === "suspended") ctx.resume();
+  setVol();
 }
+// Squared curve so the slider feels even, and capped so 100% is not painful
+function setVol(){ if (master) master.gain.value = S.vol * S.vol * 0.7; }
+function tone(freq, t0, dur, type, peak){
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(peak, t0 + 0.006);   // fast attack
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);   // smooth decay avoids pops
+  o.connect(g); g.connect(master); o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function click(peak, freq, len){
+  const n = Math.floor(ctx.sampleRate * len), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2); // decaying noise burst
+  const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  src.buffer = buf; f.type = "bandpass"; f.frequency.value = freq; f.Q.value = 1.2; g.gain.value = peak;
+  src.connect(f); f.connect(g); g.connect(master); src.start();
+}
+function alertSound(){
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (S.snd === "click") { click(1.4, 2200, 0.04); tone(300, t, 0.06, "sine", 0.25); }
+  else { tone(1319, t, 0.16, "triangle", 0.5); tone(1760, t + 0.07, 0.4, "triangle", 0.5); tone(3520, t + 0.07, 0.2, "sine", 0.08); }
+}
+function tickSound(){ if (ctx) click(0.35, 3200, 0.015); }
 function stopTimer(){
   clearInterval(tick); clearInterval(flash); tick = flash = null;
   document.title = baseTitle; $("clock").textContent = "--:--"; $("clock").classList.remove("pulse");
 }
 $("start").addEventListener("click", () => {
   stopTimer();
-  const mins = parseFloat($("mins").value) || 5, len = mins * 60000;
-  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  const secs = parseFloat($("mins").value) || 2, len = secs * 1000;
+  ensureAudio(); lastSec = null;
   endAt = Date.now() + len;
   tick = setInterval(() => {
     const left = endAt - Date.now();
     $("clock").textContent = fmt(left);
+    if (S.ticker && left > 0) { const sec = Math.ceil(left / 1000); if (sec !== lastSec) { lastSec = sec; tickSound(); } }
     if (left <= 0) {
-      beep(); toast("Time to post again");
+      alertSound(); lastSec = null; toast("Time to post again");
       endAt = Date.now() + len;
       $("clock").classList.add("pulse");
       let on = false; clearInterval(flash);
       flash = setInterval(() => { document.title = (on = !on) ? "Post now! " : baseTitle; }, 700);
-      setTimeout(() => { clearInterval(flash); document.title = baseTitle; $("clock").classList.remove("pulse"); }, 6000);
+      setTimeout(() => { clearInterval(flash); document.title = baseTitle; $("clock").classList.remove("pulse"); }, Math.min(6000, Math.max(len - 300, 300)));
     }
   }, 250);
 });
 $("stop").addEventListener("click", stopTimer);
+$("snd").value = S.snd;
+$("snd").addEventListener("change", () => { S.snd = $("snd").value; save(); ensureAudio(); alertSound(); });
+$("vol").value = Math.round(S.vol * 100);
+$("vol").addEventListener("input", () => { S.vol = $("vol").value / 100; setVol(); save(); });
+$("vol").addEventListener("change", () => { ensureAudio(); alertSound(); });  // preview when you release the slider
+$("tk").checked = S.ticker;
+$("tk").addEventListener("change", () => { S.ticker = $("tk").checked; save(); });
+$("test").addEventListener("click", () => { ensureAudio(); alertSound(); });
 
-buildRows(); renderOut();
+
+/* Presets: saved separately from the live settings so a settings reset does not erase them */
+const PKEY = "mapleTradeChat.presets.v1";
+const PFIELDS = ["type","custom","rows","tpl","mode","sep","tagA","tagB","alt","fit","rw","name","limit","fill"];
+let P = {};
+try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) {}
+const savePresets = () => { try { localStorage.setItem(PKEY, JSON.stringify(P)); return true; } catch (e) { toast("Could not save: browser storage is blocked"); return false; } };
+function renderPresets(sel){
+  const box = $("plist"); box.textContent = "";
+  const names = Object.keys(P).sort((a, b) => a.localeCompare(b));
+  if (!names.length) { const o = document.createElement("option"); o.textContent = "No presets saved yet"; o.value = ""; box.appendChild(o); return; }
+  names.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; box.appendChild(o); });
+  if (sel && P[sel]) box.value = sel;
+}
+function applyPreset(p){
+  PFIELDS.forEach(k => { if (k in p) S[k] = JSON.parse(JSON.stringify(p[k])); });   // deep copy so edits never change the stored preset
+  [["tpl","tpl"],["mode","mode"],["sep","sep"],["tagA","tagA"],["tagB","tagB"],["custom","custom"],["cname","name"],["fill","fill"],["lim","limit"],["rw","rw"]]
+    .forEach(([id, key]) => { $(id).value = S[key]; });
+  $("fit").checked = S.fit; $("alt").checked = S.alt;
+  flip = false; buildTypes(); buildRows(); syncShort(); update();
+}
+$("psave").addEventListener("click", () => {
+  const name = $("pname").value.trim();
+  if (!name) { toast("Type a preset name first"); $("pname").focus(); return; }
+  const existed = name in P, snap = {};
+  PFIELDS.forEach(k => snap[k] = JSON.parse(JSON.stringify(S[k])));
+  P[name] = snap;
+  if (!savePresets()) { if (!existed) delete P[name]; return; }
+  renderPresets(name); toast(existed ? "Preset updated" : "Preset saved");
+});
+$("pload").addEventListener("click", () => {
+  const n = $("plist").value;
+  if (!n || !P[n]) { toast("Nothing to load"); return; }
+  applyPreset(P[n]); $("pname").value = n; toast("Loaded “" + n + "”");
+});
+$("pdel").addEventListener("click", () => {
+  const n = $("plist").value;
+  if (!n || !P[n]) { toast("Nothing to delete"); return; }
+  if (!confirm("Delete preset “" + n + "”?")) return;
+  delete P[n]; savePresets(); renderPresets(); toast("Preset deleted");
+});
+renderPresets();
+
+
+/* Theme toggle: starry night (default) or light */
+const THEMEKEY = "mapleTradeChat.theme";
+function paintThemeBtn(){ $("theme").textContent = document.documentElement.dataset.theme === "night" ? "Switch to light theme" : "Switch to starry night theme"; }
+$("theme").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "night" ? "day" : "night";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(THEMEKEY, next); } catch (e) {}
+  paintThemeBtn();
+});
+paintThemeBtn();
+
+buildTypes(); buildRows(); renderOut();
 </script>
 </body>
 </html>
